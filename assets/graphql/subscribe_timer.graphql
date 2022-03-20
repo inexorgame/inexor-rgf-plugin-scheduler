@@ -1,0 +1,10 @@
+subscription subscribeTimer {
+  entity(id: "46e2ecd0-3e91-4205-99c9-d9543923a73a", propertyName: "trigger") {
+    name
+    value
+    type {
+      dataType
+      socketType
+    }
+  }
+}

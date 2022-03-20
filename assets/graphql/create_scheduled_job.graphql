@@ -1,0 +1,30 @@
+mutation {
+  instances {
+    entities {
+      create(
+        type: "scheduled_job",
+        id: "f308c1d3-15f6-4be4-a1b5-354b081c7d7e",
+        properties: [
+          {
+            name: "schedule",
+            value: "1/5 * * * * * *"
+          }
+        ]
+      ) {
+        id
+        type {
+          name
+        }
+        properties(
+          names: [
+            "schedule",
+            "trigger"
+          ]
+        ) {
+          name
+          value
+        }
+      }
+    }
+  }
+}

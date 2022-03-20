@@ -1,0 +1,37 @@
+mutation {
+  instances {
+    relations {
+      createConnector: create(
+        edgeKey: {
+          outboundId: "46e2ecd0-3e91-4205-99c9-d9543923a73a",
+          typeName: "default_connector--trigger--trigger"
+          inboundId: "c7ace165-0464-4aeb-9ec0-66a0f0c955bb",
+        },
+        properties: [
+          {
+            name: "outbound_property_name",
+            value: "trigger"
+          },
+          {
+            name: "inbound_property_name",
+            value: "trigger"
+          }
+        ]
+      ) {
+        type {
+          name
+          fullName
+        },
+        properties(
+          names: [
+            "outbound_property_name",
+            "inbound_property_name"
+          ]
+        ) {
+          name
+          value
+        }
+      }
+    }
+  }
+}
