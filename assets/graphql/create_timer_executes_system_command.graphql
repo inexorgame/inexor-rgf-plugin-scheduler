@@ -1,0 +1,57 @@
+mutation {
+  instances {
+    entities {
+      create(
+        type: "timer",
+        id: "c90a43a4-acb4-4cbe-84db-0bac480d2872",
+        components: [
+          "system_command"
+        ],
+        properties: [
+          {
+            name: "name",
+            value: "Generate timestamp every 10 seconds"
+          },
+          {
+            name: "duration",
+            value: 10000
+          },
+          {
+            name: "current_dir",
+            value: "."
+          },
+          {
+            name: "command",
+            value: "date"
+          },
+          {
+            name: "parameters",
+            value: [
+              "+%s"
+            ]
+          },
+        ]
+      ) {
+        id
+        type {
+          name
+        }
+        properties(
+          names: [
+            "name",
+            "duration",
+            "trigger",
+            "current_dir",
+            "command",
+            "parameters",
+            "stdout",
+            "stderr",
+          ]
+        ) {
+          name
+          value
+        }
+      }
+    }
+  }
+}
