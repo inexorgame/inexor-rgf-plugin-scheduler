@@ -5,6 +5,8 @@ query {
       type {
         name
       }
+      components
+      behaviours
       properties(
         names: [
           "name",
