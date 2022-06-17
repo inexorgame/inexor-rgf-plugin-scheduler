@@ -1,5 +1,6 @@
 use std::convert::AsRef;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::api::JobWrapper;
 use crate::behaviour::entity::ScheduledJobProperties;
@@ -18,27 +19,9 @@ pub struct ScheduledJob {
 
 impl ScheduledJob {
     pub fn new<'a>(e: Arc<ReactiveEntityInstance>) -> Result<ScheduledJob, BehaviourCreationError> {
-        // let entity = e.clone();
-        // let handle_id = e.properties.get(ScheduledJobProperties::SCHEDULE.as_ref()).unwrap().id.as_u128();
-        // e.properties
-        //     .get(ScheduledJobProperties::SCHEDULE.as_ref())
-        //     .unwrap()
-        //     .stream
-        //     .read()
-        //     .unwrap()
-        //     .observe_with_handle(
-        //         move |schedule| {
-        //             // if !trigger.is_boolean() || !trigger.as_bool().unwrap() {
-        //             //     return;
-        //             // }
-        //             // entity.set(ScheduledJobProperties::TRIGGER.as_ref(), json!(Uuid::new_v4()));
-        //         },
-        //         handle_id,
-        //     );
         Ok(ScheduledJob {
             entity: e.clone(),
             job_id: RwLock::new(None),
-            // handle_id,
         })
     }
 
@@ -51,12 +34,7 @@ impl ScheduledJob {
 }
 
 impl Disconnectable for ScheduledJob {
-    fn disconnect(&self) {
-        // if let Some(property) = self.entity.properties.get(ScheduledJobProperties::SCHEDULE.as_ref()) {
-        //     trace!("Disconnecting {} with id {}", SCHEDULED_JOB, self.entity.id);
-        //     property.stream.read().unwrap().remove(self.handle_id);
-        // }
-    }
+    fn disconnect(&self) {}
 }
 
 impl Drop for ScheduledJob {
@@ -78,17 +56,3 @@ impl JobWrapper for ScheduledJob {
         self.job_id.write().unwrap().take();
     }
 }
-
-// impl TryFrom<ScheduledJob> for Job {
-//     type Error = ();
-//
-//     fn try_from(scheduled_job: ScheduledJob) -> Result<Self, Self::Error> {
-//         let entity = scheduled_job.entity.clone();
-//         match scheduled_job.entity.get(ScheduledJobProperties::SCHEDULE.as_ref()).and_then(Value::as_str) {
-//             Some(schedule) => Job::new(schedule, |_uuid| {
-//                 entity.set(ScheduledJobProperties::TRIGGER.as_ref(), json!(true));
-//             }),
-//             None => Self::Error,
-//         }
-//     }
-// }
