@@ -1,0 +1,23 @@
+query {
+  instances {
+    entities(id: "f308c1d3-15f6-4be4-a1b5-354b081c7d7e") {
+      ...ScheduledJob
+    }
+  }
+}
+
+fragment ScheduledJob on EntityInstance {
+  id
+  type {
+    name
+  }
+  properties(
+    names: [
+      "schedule"
+      "trigger"
+    ]
+  ) {
+    name
+    value
+  }
+}

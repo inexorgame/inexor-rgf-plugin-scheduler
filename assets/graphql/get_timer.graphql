@@ -1,0 +1,23 @@
+query {
+  instances {
+    entities(id: "46e2ecd0-3e91-4205-99c9-d9543923a73a") {
+      ...Timer
+    }
+  }
+}
+
+fragment Timer on EntityInstance {
+  id
+  type {
+    name
+  }
+  properties(
+    names: [
+      "duration"
+      "trigger"
+    ]
+  ) {
+    name
+    value
+  }
+}

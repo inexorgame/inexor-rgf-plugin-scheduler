@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::thread;
+use std::time::Duration;
 
-use crate::model::PropertyInstanceSetter;
 use async_trait::async_trait;
 use log::debug;
 use log::error;
 use log::info;
 use serde_json::json;
 use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
+use tokio_cron_scheduler::Job;
 use tokio_cron_scheduler::JobScheduler;
-use tokio_cron_scheduler::{Job, JobSchedulerError};
+use tokio_cron_scheduler::JobSchedulerError;
 use uuid::Uuid;
 
 use crate::api::JobWrapper;
@@ -23,10 +24,11 @@ use crate::behaviour::entity::timer::TIMER;
 use crate::behaviour::entity::ScheduledJobProperties;
 use crate::behaviour::entity::TimerProperties;
 use crate::di::*;
+use crate::model::PropertyInstanceSetter;
 use crate::plugins::PluginContext;
 
 #[wrapper]
-pub struct JobSchedulerContainer(JobScheduler);
+pub struct JobSchedulerContainer(RwLock<Option<JobScheduler>>);
 
 #[wrapper]
 pub struct ScheduledJobStorage(RwLock<HashMap<Uuid, Arc<ScheduledJob>>>);
@@ -42,7 +44,7 @@ pub struct RuntimeContainer(Runtime);
 
 #[provides]
 fn create_job_scheduler_container() -> JobSchedulerContainer {
-    JobSchedulerContainer(JobScheduler::new())
+    JobSchedulerContainer(RwLock::new(None))
 }
 
 #[provides]
@@ -63,7 +65,8 @@ fn create_empty_plugin_context_container() -> PluginContextContainer {
 #[provides]
 fn create_runtime() -> RuntimeContainer {
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_time()
+        .enable_all()
+        // .enable_time()
         .thread_name("inexor-scheduler")
         .build()
         .unwrap();
@@ -85,42 +88,27 @@ impl SchedulerManagerImpl {}
 #[provides]
 impl SchedulerManager for SchedulerManagerImpl {
     fn init(&self) {
-        info!("Starting job scheduler");
-        let job_scheduler = self.job_scheduler.0.clone();
-        self.runtime.0.spawn(async move {
-            // let jl: JobsSchedulerLocked = self.clone();
-            let jh: JoinHandle<()> = tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(core::time::Duration::from_millis(10)).await;
-                    let mut jsl = job_scheduler.clone();
-                    let tick = jsl.tick();
-                    if let Err(e) = tick {
-                        eprintln!("Error on job scheduler tick {:?}", e);
-                        break;
-                    }
-                }
-            });
-            match jh.await {
-                Ok(_) => {
-                    info!("Successfully started scheduler");
-                }
-                Err(err) => {
-                    error!("Failed to started scheduler: {:?}", err);
-                }
-            }
+        self.runtime.0.block_on(async {
+            self.create_scheduler().await;
         });
+        self.start_loop();
     }
 
     fn shutdown(&self) {
         debug!("Shutting down job scheduler");
-        let mut job_scheduler = self.job_scheduler.0.clone();
-        match job_scheduler.shutdown() {
-            Ok(_) => {
-                info!("Successfully shut down scheduler");
-            }
-            Err(err) => {
-                error!("Failed to shut down scheduler: {:?}", err);
-            }
+        let lock_gard = self.job_scheduler.0.read().unwrap();
+        if let Some(job_scheduler) = lock_gard.clone() {
+            let mut job_scheduler = job_scheduler.clone();
+            self.runtime.0.spawn(async move {
+                match job_scheduler.shutdown().await {
+                    Ok(_) => {
+                        info!("Successfully shut down job scheduler");
+                    }
+                    Err(err) => {
+                        error!("Failed to shut down job scheduler: {:?}", err);
+                    }
+                }
+            });
         }
     }
 
@@ -128,53 +116,117 @@ impl SchedulerManager for SchedulerManagerImpl {
         self.context.0.write().unwrap().replace(context.clone());
     }
 
-    fn remove_job(&self, entity_type: String, id: Uuid, job_id: Uuid) -> Result<(), JobSchedulerError> {
-        let mut job_scheduler = self.job_scheduler.0.clone();
-        match job_scheduler.remove(&job_id) {
-            Ok(_) => {
-                debug!("Removed {} {} from scheduler (job_id: {})", entity_type, id, job_id);
-                Ok(())
-            }
-            Err(err) => {
-                error!("Failed to remove {} {} from scheduler (job_id: {}): {:?}", entity_type, id, job_id, err);
-                Err(err)
-            }
+    async fn create_scheduler(&self) {
+        if let Ok(job_scheduler) = JobScheduler::new().await {
+            let mut lock_gard = self.job_scheduler.0.write().unwrap();
+            lock_gard.replace(job_scheduler);
         }
     }
 
-    fn add_scheduled_job_job(&self, id: Uuid) {
-        self.remove_scheduled_job_job(id);
-        let reader = self.scheduled_jobs.0.read().unwrap();
-        if let Some(scheduled_job) = reader.get(&id).cloned() {
-            match scheduled_job.get_schedule() {
-                Some(schedule) => {
-                    let entity = scheduled_job.entity.clone();
-                    debug!("Creating job for {} {} with schedule {}", SCHEDULED_JOB, entity.id, schedule.as_str());
-                    let job = Job::new(schedule.as_str(), move |job_id, _locked| {
-                        debug!("Triggered {} (job_id: {})", SCHEDULED_JOB, job_id);
-                        entity.set(ScheduledJobProperties::TRIGGER.as_ref(), json!(true));
-                    });
-                    match job {
-                        Ok(job) => {
-                            let job_id = job.guid();
-                            let mut job_scheduler = self.job_scheduler.0.clone();
-                            match job_scheduler.add(job) {
-                                Ok(_) => {
-                                    scheduled_job.set_job_id(job_id);
-                                    debug!("Successfully scheduled {} {} (job_id: {})", SCHEDULED_JOB, id, job_id);
-                                }
-                                Err(err) => {
-                                    error!("Failed to schedule {} {} (job_id: {}): {:?}", SCHEDULED_JOB, id, job_id, err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            error!("Failed to create job for {} {}: {}", SCHEDULED_JOB, id, err);
-                        }
+    fn start_loop(&self) {
+        let lock_gard = self.job_scheduler.0.read().unwrap();
+        if let Some(mut job_scheduler) = lock_gard.clone() {
+            self.runtime.0.spawn(async move {
+                match job_scheduler.init().await {
+                    Ok(_) => {
+                        debug!("Successfully initialized job scheduler");
+                    }
+                    Err(e) => {
+                        error!("Failed to init job scheduler: {}", e);
                     }
                 }
-                None => {
-                    error!("Failed to create job for {} {}: Invalid schedule format or missing schedule", SCHEDULED_JOB, id);
+                match job_scheduler.start().await {
+                    Ok(_) => {
+                        debug!("Successfully started job scheduler");
+                    }
+                    Err(e) => {
+                        error!("Failed to start job scheduler: {}", e);
+                    }
+                }
+                // tokio::spawn(async move {
+                //     let job_scheduler = job_scheduler.clone();
+                //     job_scheduler.start();
+                // });
+                // tokio::spawn(async move {
+                //     let job_scheduler = job_scheduler.clone();
+                //     loop {
+                //         // 100 fps
+                //         // tokio::time::sleep(core::time::Duration::from_millis(10)).await;
+                //         thread::sleep(Duration::from_millis(10));
+                //         match job_scheduler.tick().await {
+                //             Ok(_) => {
+                //                 // debug!("Tick");
+                //             }
+                //             Err(e) => {
+                //                 error!("Error on job scheduler tick {:?}", e);
+                //                 thread::sleep(Duration::from_secs(1));
+                //                 // break;
+                //             }
+                //         }
+                //     }
+                //     error!("Exited job scheduler loop");
+                // });
+            });
+        }
+    }
+
+    fn remove_job(&self, entity_type: String, id: Uuid, job_id: Uuid) -> Result<(), JobSchedulerError> {
+        let lock_gard = self.job_scheduler.0.read().unwrap();
+        if let Some(job_scheduler) = lock_gard.clone() {
+            let job_scheduler = job_scheduler.clone();
+            self.runtime.0.block_on(async move {
+                match job_scheduler.remove(&job_id).await {
+                    Ok(_) => {
+                        debug!("Removed {} {} from scheduler (job_id: {})", entity_type, id, job_id);
+                    }
+                    Err(err) => {
+                        error!("Failed to remove {} {} from scheduler (job_id: {}): {:?}", entity_type, id, job_id, err);
+                    }
+                }
+            });
+        }
+        Ok(())
+    }
+
+    fn add_scheduled_job_job(&self, id: Uuid) {
+        let lock_gard = self.job_scheduler.0.read().unwrap();
+        if let Some(job_scheduler) = lock_gard.clone() {
+            let job_scheduler = job_scheduler.clone();
+            self.remove_scheduled_job_job(id);
+            let reader = self.scheduled_jobs.0.read().unwrap();
+            if let Some(scheduled_job) = reader.get(&id).cloned() {
+                match scheduled_job.get_schedule() {
+                    Some(schedule) => {
+                        // let entity_id = scheduled_job.entity.id;
+                        let entity = scheduled_job.entity.clone();
+                        debug!("Creating job for {} {} with schedule {}", SCHEDULED_JOB, entity.id, schedule.as_str());
+                        let job = Job::new(schedule.as_str(), move |job_id, _locked| {
+                            debug!("Triggered {} {} (job_id: {})", SCHEDULED_JOB, id, job_id);
+                            entity.set(ScheduledJobProperties::TRIGGER.as_ref(), json!(true));
+                        });
+                        match job {
+                            Ok(job) => {
+                                self.runtime.0.block_on(async move {
+                                    let job_id = job.guid();
+                                    match job_scheduler.add(job).await {
+                                        Ok(uuid) => {
+                                            scheduled_job.set_job_id(uuid);
+                                            debug!("Successfully scheduled {} {} (job_id: {})", SCHEDULED_JOB, id, uuid);
+                                        }
+                                        Err(err) => {
+                                            error!("Failed to schedule {} {} (job_id: {}): {:?}", SCHEDULED_JOB, id, job_id, err);
+                                        }
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to create job for {} {}: {}", SCHEDULED_JOB, id, e);
+                            }
+                        }
+                    }
+                    None => {
+                        error!("Failed to create job for {} {}: Invalid schedule format or missing schedule", SCHEDULED_JOB, id);
+                    }
                 }
             }
         }
@@ -206,41 +258,42 @@ impl SchedulerManager for SchedulerManagerImpl {
     }
 
     fn add_timer_job(&self, id: Uuid) {
-        self.remove_timer_job(id);
-        let reader = self.timers.0.read().unwrap();
-        if let Some(timer) = reader.get(&id).cloned() {
-            match timer.get_duration() {
-                Some(duration) => {
-                    let mut job_scheduler = self.job_scheduler.0.clone();
-                    self.runtime.0.spawn(async move {
+        let lock_gard = self.job_scheduler.0.read().unwrap();
+        if let Some(job_scheduler) = lock_gard.clone() {
+            let job_scheduler = job_scheduler.clone();
+            self.remove_timer_job(id);
+            let reader = self.timers.0.read().unwrap();
+            if let Some(timer) = reader.get(&id).cloned() {
+                match timer.get_duration() {
+                    Some(duration) => {
                         let entity = timer.entity.clone();
-                        debug!("Creating job for {} {} with duration {:?}", TIMER, entity.id, duration);
                         let job = Job::new_repeated(duration, move |job_id, _locked| {
-                            debug!("Triggered {} (job_id: {})", TIMER, job_id);
+                            debug!("Triggered {} {} (job_id: {})", TIMER, id, job_id);
                             entity.set(TimerProperties::TRIGGER.as_ref(), json!(true));
                         });
                         match job {
                             Ok(job) => {
-                                let job_id = job.guid();
-                                // let mut job_scheduler = self.job_scheduler.0.clone();
-                                match job_scheduler.add(job) {
-                                    Ok(_) => {
-                                        timer.set_job_id(job_id);
-                                        debug!("Successfully scheduled {} {} (job_id: {})", TIMER, id, job_id);
+                                self.runtime.0.block_on(async move {
+                                    let job_id = job.guid();
+                                    match job_scheduler.add(job).await {
+                                        Ok(uuid) => {
+                                            timer.set_job_id(uuid);
+                                            info!("Successfully scheduled {} {} (job_id: {})", TIMER, id, uuid);
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to schedule {} {} (job_id: {}): {:?}", TIMER, id, job_id, e);
+                                        }
                                     }
-                                    Err(err) => {
-                                        error!("Failed to schedule {} {} (job_id: {}): {:?}", TIMER, id, job_id, err);
-                                    }
-                                }
+                                });
                             }
-                            Err(err) => {
-                                error!("Failed to create job for {} {}: {}", TIMER, id, err);
+                            Err(e) => {
+                                error!("Failed to create job for {} {}: {}", TIMER, id, e);
                             }
                         }
-                    });
-                }
-                None => {
-                    error!("Failed to create job for {} {}: Invalid duration format or missing duration", TIMER, id);
+                    }
+                    None => {
+                        error!("Failed to create job for {} {}: Invalid duration format or missing duration", TIMER, id);
+                    }
                 }
             }
         }

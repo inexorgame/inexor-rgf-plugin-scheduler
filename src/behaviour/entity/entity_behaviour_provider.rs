@@ -4,6 +4,7 @@ use std::sync::RwLock;
 
 use crate::api::SchedulerManager;
 use crate::di::*;
+use crate::model::ReactiveBehaviourContainer;
 use async_trait::async_trait;
 use log::debug;
 use uuid::Uuid;
@@ -123,6 +124,8 @@ impl SchedulerEntityBehaviourProvider for SchedulerEntityBehaviourProviderImpl {
     fn remove_scheduled_job(&self, entity_instance: Arc<ReactiveEntityInstance>) {
         let id = entity_instance.id;
         if let Some(scheduled_job) = self.scheduled_jobs.0.write().unwrap().remove(&entity_instance.id) {
+            // Unregister scheduled job
+            self.scheduler_manager.unregister_scheduled_job(scheduled_job.clone());
             // Remove watcher
             scheduled_job
                 .entity
@@ -133,8 +136,6 @@ impl SchedulerEntityBehaviourProvider for SchedulerEntityBehaviourProviderImpl {
                 .read()
                 .unwrap()
                 .remove(id.as_u128());
-            // Unregister scheduled job
-            self.scheduler_manager.unregister_scheduled_job(scheduled_job);
         }
         entity_instance.remove_behaviour(SCHEDULED_JOB);
         debug!("Removed behaviour {} from entity instance {}", SCHEDULED_JOB, entity_instance.id);
@@ -143,6 +144,8 @@ impl SchedulerEntityBehaviourProvider for SchedulerEntityBehaviourProviderImpl {
     fn remove_timer(&self, entity_instance: Arc<ReactiveEntityInstance>) {
         let id = entity_instance.id;
         if let Some(timer) = self.timers.0.write().unwrap().remove(&id) {
+            // Unregister timer
+            self.scheduler_manager.unregister_timer(timer.clone());
             // Remove watcher
             timer
                 .entity
@@ -153,8 +156,6 @@ impl SchedulerEntityBehaviourProvider for SchedulerEntityBehaviourProviderImpl {
                 .read()
                 .unwrap()
                 .remove(id.as_u128());
-            // Unregister timer
-            self.scheduler_manager.unregister_timer(timer);
         }
         entity_instance.remove_behaviour(TIMER);
         debug!("Removed behaviour {} from entity instance {}", TIMER, entity_instance.id);

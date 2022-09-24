@@ -16,6 +16,10 @@ pub trait SchedulerManager: Send + Sync {
 
     fn set_context(&self, context: Arc<dyn PluginContext>);
 
+    async fn create_scheduler(&self);
+
+    fn start_loop(&self);
+
     fn remove_job(&self, entity_type: String, id: Uuid, job_id: Uuid) -> Result<(), JobSchedulerError>;
 
     fn add_scheduled_job_job(&self, id: Uuid);
