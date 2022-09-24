@@ -8,6 +8,7 @@ mutation {
           "system_command"
         ],
         properties: [
+          ### Timer ###
           {
             name: "name",
             value: "Generate timestamp every 10 seconds"
@@ -16,6 +17,7 @@ mutation {
             name: "duration",
             value: 10000
           },
+          ### System Command ###
           {
             name: "current_dir",
             value: "."
@@ -41,8 +43,10 @@ mutation {
         properties(
           names: [
             "name",
+            ### Timer ###
             "duration",
             "trigger",
+            ### System Command ###
             "current_dir",
             "command",
             "parameters",
