@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::thread;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use log::debug;
